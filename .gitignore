@@ -1,0 +1,98 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs-info/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.txt
+*.whl
+MANIFEST
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+virtualenv/
+virtualenvs/
+
+# Environments created by poetry
+.venv*
+
+# Environments created by pipenv
+Pipfile.lock
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Django specific
+*.log
+*.pot
+*.sqlite3
+local_settings.py
+db.sqlite3
+
+# Flask specific
+instance/
+
+# Celery and RabbitMQ
+celerybeat-schedule
+celerybeat.pid
+
+# Sensitive data
+*.secret
+*.key
+*.pem
+.env
+.env.*
+secrets.json
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+
+# PyInstaller
+dist/
+build/
+
+# Coverage data
+.coverage
+*.coverage
+*.dat
+
+# Compiled static assets
+*.pyc
+*.pyd
+
+# MyPy cache
+.mypy_cache/
+
+# Ruff cache
+.ruff_cache/
+
+# Other
+*.
+.idea/
