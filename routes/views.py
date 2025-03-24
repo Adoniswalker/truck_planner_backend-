@@ -29,10 +29,14 @@ def calculate_route(request):
             # dropoffLocation = data.get('dropoffLocation')
 
             # print(api_key)
+            route_data = calculate_route(request.data)
+            logs = generate_eld_logs(route_data)
+            
             url = f"https://maps.googleapis.com/maps/api/directions/json?{urlencode(params)}"
             print(url)
             response = requests.get(url)
             response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+            return Response({"route": route_data, "logs": logs})
             return JsonResponse(response.json())
         except requests.exceptions.RequestException as e:
             return JsonResponse({'error': str(e)}, status=500)
