@@ -11,36 +11,128 @@ import io
 MAPBOX_ACCESS_TOKEN = os.environ.get('MAPBOX_ACCESS_TOKEN')
 
 
-# Mock calculate_route_mapbox for testing
+
 def calculate_route_mapbox(request_data):
-    """Mock function for testing without API calls"""
-
     def parse_coords(coord_str):
-        lng, lat = map(float, coord_str.split(','))
-        return [lng, lat]
+        try:
+            lng, lat = map(float, coord_str.split(','))
+            return [lng, lat]
+        except ValueError as e:
+            raise Exception(f"Invalid coordinate format: {coord_str} - {str(e)}")
 
-    current_coords = parse_coords(request_data['currentLocation'])
-    pickup_coords = parse_coords(request_data['pickupLocation'])
-    dropoff_coords = parse_coords(request_data['dropoffLocation'])
+    try:
+        current_coords = parse_coords(request_data['currentLocation'])
+        pickup_coords = parse_coords(request_data['pickupLocation'])
+        dropoff_coords = parse_coords(request_data['dropoffLocation'])
+    except KeyError as e:
+        raise Exception(f"Missing required field: {str(e)}")
 
-    total_distance = 1200  # miles
-    total_duration = 20  # hours
-    segments = [
-        {'start': current_coords, 'end': pickup_coords, 'distance': 600, 'duration': 10},
-        {'start': pickup_coords, 'end': dropoff_coords, 'distance': 600, 'duration': 10}
-    ]
+    if pickup_coords == dropoff_coords:
+        coordinates_str = f"{current_coords[0]},{current_coords[1]};{pickup_coords[0]},{pickup_coords[1]}"
+    else:
+        coordinates_str = f"{current_coords[0]},{current_coords[1]};{pickup_coords[0]},{pickup_coords[1]};{dropoff_coords[0]},{dropoff_coords[1]}"
+
+    url = f"https://api.mapbox.com/directions/v5/mapbox/driving/{coordinates_str}"
+    params = {
+        "access_token": MAPBOX_ACCESS_TOKEN,
+        "geometries": "geojson",
+        "steps": "true",
+        "overview": "full"
+    }
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        raise Exception(f"Mapbox API error: {response.status_code} - {response.text}")
+
+    # data = response.json()
+    # with open("output.json", "w") as file:
+    #     json.dump(data, file, indent=4)
+    with open("output.json", "r") as file:
+        data = json.load(file)
+    if "routes" not in data or not data["routes"]:
+        raise Exception(f"No routes found in response: {json.dumps(data)}")
+
+    route = data["routes"][0]
+    if "geometry" not in route:
+        raise Exception(f"Geometry not found in route: {json.dumps(route)}")
+
+    total_distance = route["distance"] * 0.000621371
+    total_duration = route["duration"] / 3600
+    route_coordinates = route["geometry"]["coordinates"]
+
+    segments = []
+    legs = route.get("legs", [])
+    if len(legs) == 1:
+        leg = legs[0]
+        segments.append({
+            'start': route_coordinates[0],
+            'end': route_coordinates[-1],
+            'distance': leg["distance"] * 0.000621371,
+            'duration': leg["duration"] / 3600
+        })
+    else:
+        for i, leg in enumerate(legs):
+            start_idx = 0 if i == 0 else len(route_coordinates) // 2
+            end_idx = len(route_coordinates) if i == len(legs) - 1 else len(route_coordinates) // 2
+            coordinates = route_coordinates[start_idx:end_idx + 1]
+            segments.append({
+                'start': coordinates[0],
+                'end': coordinates[-1],
+                'distance': leg["distance"] * 0.000621371,
+                'duration': leg["duration"] / 3600
+            })
+
+    fuel_stops = []
+    remaining_distance = total_distance
+    while remaining_distance > 1000:
+        fuel_stops.append({
+            'type': 'fuel',
+            'mile_marker': total_distance - remaining_distance,
+            'duration': 0.5
+        })
+        remaining_distance -= 1000
+
     stops = [
-        {'type': 'pickup', 'location': pickup_coords, 'distance': 600, 'duration': 1.0},  # Pickup at 600 miles
-        {'type': 'fuel', 'mile_marker': 1000, 'duration': 0.5},  # Fuel at 1000 miles
-        {'type': 'dropoff', 'location': dropoff_coords, 'distance': 1200, 'duration': 1.0}  # Dropoff at 1200 miles
-    ]
+        {'type': 'pickup', 'location': pickup_coords, 'duration': 1.0},
+        {'type': 'dropoff', 'location': dropoff_coords, 'duration': 1.0}
+    ] + fuel_stops
     return {
         'total_distance': total_distance,
         'total_duration': total_duration,
         'segments': segments,
         'stops': stops,
-        'geometry': {'coordinates': [current_coords, pickup_coords, dropoff_coords]}
+        'geometry': route["geometry"]
     }
+
+# # Mock calculate_route_mapbox for testing
+# def calculate_route_mapbox(request_data):
+#     """Mock function for testing without API calls"""
+#
+#     def parse_coords(coord_str):
+#         lng, lat = map(float, coord_str.split(','))
+#         return [lng, lat]
+#
+#     current_coords = parse_coords(request_data['currentLocation'])
+#     pickup_coords = parse_coords(request_data['pickupLocation'])
+#     dropoff_coords = parse_coords(request_data['dropoffLocation'])
+#
+#     total_distance = 1200  # miles
+#     total_duration = 20  # hours
+#     segments = [
+#         {'start': current_coords, 'end': pickup_coords, 'distance': 600, 'duration': 10},
+#         {'start': pickup_coords, 'end': dropoff_coords, 'distance': 600, 'duration': 10}
+#     ]
+#     stops = [
+#         {'type': 'pickup', 'location': pickup_coords, 'distance': 600, 'duration': 1.0},  # Pickup at 600 miles
+#         {'type': 'fuel', 'mile_marker': 1000, 'duration': 0.5},  # Fuel at 1000 miles
+#         {'type': 'dropoff', 'location': dropoff_coords, 'distance': 1200, 'duration': 1.0}  # Dropoff at 1200 miles
+#     ]
+#     return {
+#         'total_distance': total_distance,
+#         'total_duration': total_duration,
+#         'segments': segments,
+#         'stops': stops,
+#         'geometry': {'coordinates': [current_coords, pickup_coords, dropoff_coords]}
+#     }
 
 
 # Draw duty grid with 12, 1, 2, ..., 11, 12 labels
@@ -73,7 +165,6 @@ def draw_duty_grid(duty_statuses):
     return buf
 
 
-# Updated generate_daily_logs
 def generate_daily_logs(route_data, driver_info, start_date):
     """Generate daily log data based on route data with HOS limits"""
     total_distance = route_data['total_distance']
@@ -87,8 +178,9 @@ def generate_daily_logs(route_data, driver_info, start_date):
     odometer = 150000
     total_on_duty_hours = 0
     eight_day_start = current_time
-
+    # import pdb;pdb.set_trace()
     while distance_covered < total_distance:
+        print("called 1")
         duty_statuses = {"Off Duty": [], "Sleeper Berth": [], "Driving": [], "On Duty Not Dr": []}
         day_start = current_time.replace(hour=0, minute=0, second=0)
         driving_hours = 0
@@ -112,6 +204,7 @@ def generate_daily_logs(route_data, driver_info, start_date):
         # Driving and stops
         segment_index = 0
         while segment_index < len(segments) and distance_covered < total_distance:
+            print("called 2")
             segment = segments[segment_index]
             prior_distance = sum(s['distance'] for s in segments[:segment_index]) if segment_index > 0 else 0
             remaining_segment_distance = segment['distance'] - (distance_covered - prior_distance)
@@ -135,6 +228,7 @@ def generate_daily_logs(route_data, driver_info, start_date):
 
                     # Process stops based on distance covered
                     for stop in stops[:]:
+                        print("called 3")
                         stop_distance = stop.get('distance', stop.get('mile_marker', total_distance))
                         if stop_distance <= distance_covered:
                             stop_start = (current_time - day_start).total_seconds() / 3600
@@ -218,26 +312,26 @@ def create_pdf(logs, filename="driver_log_sheets.pdf"):
 
 
 # Example usage
-request_data = {
-    "currentLocation": "-121.53449957986606,37.72174814332759",
-    "pickupLocation": "-118.30225731779183,34.08637121805918",
-    "dropoffLocation": "-77.16697187740498,39.075873963992436"
-}
+# request_data = {
+#     "currentLocation": "-121.53449957986606,37.72174814332759",
+#     "pickupLocation": "-118.30225731779183,34.08637121805918",
+#     "dropoffLocation": "-77.16697187740498,39.075873963992436"
+# }
 
-driver_info = {
-    "name": "John Doe",
-    "carrier": "ABC Trucking, 123 Freight Lane, Los Angeles, CA 90001",
-    "truck_number": "4567"
-}
+# driver_info = {
+#     "name": "John Doe",
+#     "carrier": "ABC Trucking, 123 Freight Lane, Los Angeles, CA 90001",
+#     "truck_number": "4567"
+# }
 
-if __name__ == "__main__":
-    route_data = calculate_route_mapbox(request_data)
-    logs = generate_daily_logs(route_data, driver_info, "2025-03-24")
-    for log in logs:
-        print(f"{log['Day']}: {log['Duty Statuses']}")
-        print(f"Total Miles Driven: {log['Total Miles Driven']}, On Duty Hours: {log['On Duty Hours']}")
-    total_logged_distance = sum(log["Total Miles Driven"] for log in logs)
-    total_on_duty_hours = sum(log["On Duty Hours"] for log in logs)
-    print(f"Total Distance Logged: {total_logged_distance} miles vs Expected: {route_data['total_distance']} miles")
-    print(f"Total On Duty Hours: {total_on_duty_hours} (Limit: 70 hours / 8 days)")
-    create_pdf(logs)
+# if __name__ == "__main__":
+#     route_data = calculate_route_mapbox(request_data)
+#     logs = generate_daily_logs(route_data, driver_info, "2025-03-24")
+#     for log in logs:
+#         print(f"{log['Day']}: {log['Duty Statuses']}")
+#         print(f"Total Miles Driven: {log['Total Miles Driven']}, On Duty Hours: {log['On Duty Hours']}")
+#     total_logged_distance = sum(log["Total Miles Driven"] for log in logs)
+#     total_on_duty_hours = sum(log["On Duty Hours"] for log in logs)
+#     print(f"Total Distance Logged: {total_logged_distance} miles vs Expected: {route_data['total_distance']} miles")
+#     print(f"Total On Duty Hours: {total_on_duty_hours} (Limit: 70 hours / 8 days)")
+#     create_pdf(logs)
