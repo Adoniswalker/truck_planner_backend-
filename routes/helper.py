@@ -11,19 +11,11 @@ import io
 MAPBOX_ACCESS_TOKEN = os.environ.get('MAPBOX_ACCESS_TOKEN')
 
 
-
 def calculate_route_mapbox(request_data):
-    def parse_coords(coord_str):
-        try:
-            lng, lat = map(float, coord_str.split(','))
-            return [lng, lat]
-        except ValueError as e:
-            raise Exception(f"Invalid coordinate format: {coord_str} - {str(e)}")
-
     try:
-        current_coords = parse_coords(request_data['currentLocation'])
-        pickup_coords = parse_coords(request_data['pickupLocation'])
-        dropoff_coords = parse_coords(request_data['dropoffLocation'])
+        current_coords = request_data['current']
+        pickup_coords = request_data['pickup']
+        dropoff_coords = request_data['dropoff']
     except KeyError as e:
         raise Exception(f"Missing required field: {str(e)}")
 
@@ -39,9 +31,9 @@ def calculate_route_mapbox(request_data):
         "steps": "true",
         "overview": "full"
     }
-    response = requests.get(url, params=params)
-    if response.status_code != 200:
-        raise Exception(f"Mapbox API error: {response.status_code} - {response.text}")
+    # response = requests.get(url, params=params)
+    # if response.status_code != 200:
+    #     raise Exception(f"Mapbox API error: {response.status_code} - {response.text}")
 
     # data = response.json()
     # with open("output.json", "w") as file:
@@ -55,31 +47,37 @@ def calculate_route_mapbox(request_data):
     if "geometry" not in route:
         raise Exception(f"Geometry not found in route: {json.dumps(route)}")
 
-    total_distance = route["distance"] * 0.000621371
-    total_duration = route["duration"] / 3600
-    route_coordinates = route["geometry"]["coordinates"]
+    total_distance = route["distance"] * 0.000621371  # distance in miles
+    total_duration = route["duration"] / 3600  # converting to hours
 
     segments = []
     legs = route.get("legs", [])
-    if len(legs) == 1:
-        leg = legs[0]
+    waypoints =  data.get("waypoints", [])
+
+    num_legs = len(legs)
+
+    if num_legs == 1:
         segments.append({
-            'start': route_coordinates[0],
-            'end': route_coordinates[-1],
-            'distance': leg["distance"] * 0.000621371,
-            'duration': leg["duration"] / 3600
+            'start': waypoints[0]["location"],
+            'end': waypoints[-1]["location"],
+            'distance': legs[0]["distance"] * 0.000621371,  # Convert meters to miles
+            'duration': legs[0]["duration"] / 3600  # Convert seconds to hours
+        })
+    elif num_legs == 2 and len(waypoints) >= 3:
+        segments.append({
+            'start': waypoints[0]["location"],
+            'end': waypoints[1]["location"],
+            'distance': legs[0]["distance"] * 0.000621371,
+            'duration': legs[0]["duration"] / 3600
+        })
+        segments.append({
+            'start': waypoints[1]["location"],
+            'end': waypoints[2]["location"],
+            'distance': legs[1]["distance"] * 0.000621371,
+            'duration': legs[1]["duration"] / 3600
         })
     else:
-        for i, leg in enumerate(legs):
-            start_idx = 0 if i == 0 else len(route_coordinates) // 2
-            end_idx = len(route_coordinates) if i == len(legs) - 1 else len(route_coordinates) // 2
-            coordinates = route_coordinates[start_idx:end_idx + 1]
-            segments.append({
-                'start': coordinates[0],
-                'end': coordinates[-1],
-                'distance': leg["distance"] * 0.000621371,
-                'duration': leg["duration"] / 3600
-            })
+        raise ValueError(f"Unexpected number of legs ({num_legs}) or missing waypoints {len(waypoints)}.")
 
     fuel_stops = []
     remaining_distance = total_distance
@@ -92,16 +90,17 @@ def calculate_route_mapbox(request_data):
         remaining_distance -= 1000
 
     stops = [
-        {'type': 'pickup', 'location': pickup_coords, 'duration': 1.0},
-        {'type': 'dropoff', 'location': dropoff_coords, 'duration': 1.0}
-    ] + fuel_stops
+                {'type': 'pickup', 'location': pickup_coords, 'duration': 1.0},
+                {'type': 'dropoff', 'location': dropoff_coords, 'duration': 1.0}
+            ] + fuel_stops
     return {
         'total_distance': total_distance,
         'total_duration': total_duration,
         'segments': segments,
         'stops': stops,
-        'geometry': route["geometry"]
+        'coordinates': route["geometry"]["coordinates"],
     }
+
 
 # # Mock calculate_route_mapbox for testing
 # def calculate_route_mapbox(request_data):
@@ -177,14 +176,14 @@ def generate_daily_logs(route_data, driver_info, start_date):
     day = 1
     odometer = 150000
     total_on_duty_hours = 0
-    eight_day_start = current_time
-    # import pdb;pdb.set_trace()
+    segment_progress = [0] * len(segments)  # Track distance covered per segment
+
     while distance_covered < total_distance:
-        print("called 1")
         duty_statuses = {"Off Duty": [], "Sleeper Berth": [], "Driving": [], "On Duty Not Dr": []}
         day_start = current_time.replace(hour=0, minute=0, second=0)
         driving_hours = 0
         on_duty_hours = 0
+        previous_distance_covered = distance_covered  # To detect stagnation
 
         # Check 70-hour limit
         if total_on_duty_hours >= 70:
@@ -204,16 +203,19 @@ def generate_daily_logs(route_data, driver_info, start_date):
         # Driving and stops
         segment_index = 0
         while segment_index < len(segments) and distance_covered < total_distance:
-            print("called 2")
             segment = segments[segment_index]
             prior_distance = sum(s['distance'] for s in segments[:segment_index]) if segment_index > 0 else 0
-            remaining_segment_distance = segment['distance'] - (distance_covered - prior_distance)
+            segment_distance_covered = segment_progress[segment_index]
+            remaining_segment_distance = segment['distance'] - segment_distance_covered
 
             if remaining_segment_distance <= 0:
                 segment_index += 1
                 continue
 
             speed = segment['distance'] / segment['duration']  # miles per hour
+            if speed <= 0:
+                raise ValueError(f"Invalid speed {speed} for segment {segment_index}")
+
             duration = min(remaining_segment_distance / speed, 11 - driving_hours, 14 - on_duty_hours,
                            70 - total_on_duty_hours - on_duty_hours)
             if duration > 0:
@@ -221,14 +223,15 @@ def generate_daily_logs(route_data, driver_info, start_date):
                 end_hour = start_hour + duration
                 if end_hour <= 24:
                     duty_statuses["Driving"].append((start_hour, end_hour))
-                    distance_covered += duration * speed
+                    distance_added = duration * speed
+                    distance_covered += distance_added
+                    segment_progress[segment_index] += distance_added
                     driving_hours += duration
                     on_duty_hours += duration
                     current_time += timedelta(hours=duration)
 
                     # Process stops based on distance covered
                     for stop in stops[:]:
-                        print("called 3")
                         stop_distance = stop.get('distance', stop.get('mile_marker', total_distance))
                         if stop_distance <= distance_covered:
                             stop_start = (current_time - day_start).total_seconds() / 3600
@@ -239,7 +242,7 @@ def generate_daily_logs(route_data, driver_info, start_date):
                                 on_duty_hours += stop['duration']
                                 stops.remove(stop)
                 else:
-                    break
+                    break  # Move to next day if we exceed 24 hours
             segment_index += 1
 
         # Sleeper Berth (10-hour reset)
@@ -277,6 +280,11 @@ def generate_daily_logs(route_data, driver_info, start_date):
         odometer = log["Ending Odometer"]
         day += 1
 
+        # Check for stagnation
+        if distance_covered == previous_distance_covered and segment_index >= len(segments):
+            print(f"No progress made on Day {day - 1}. Terminating due to HOS limits or all segments completed.")
+            break
+
         # Check 8-day cycle
         if day > 8:
             total_on_duty_hours -= logs[day - 9]["On Duty Hours"] if day - 9 >= 0 else 0
@@ -309,7 +317,6 @@ def create_pdf(logs, filename="driver_log_sheets.pdf"):
         story.append(Spacer(1, 36))
 
     doc.build(story)
-
 
 # Example usage
 # request_data = {

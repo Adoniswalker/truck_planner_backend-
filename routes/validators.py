@@ -1,18 +1,22 @@
 from pydantic import BaseModel, Field, field_validator
+from typing import List
 
 
 class PositionData(BaseModel):
-    # value: str = Field(pattern=r'^abc(?=def)')
-    currentLocation: str =  Field(pattern=r'^-?\d{1,2}(\.\d+)?,\s*-?\d{1,3}(\.\d+)?$')
-    pickupLocation:str = Field(pattern=r'^-?\d{1,2}(\.\d+)?,\s*-?\d{1,3}(\.\d+)?$')
-    dropoffLocation:str  =  Field(pattern=r'^-?\d{1,2}(\.\d+)?,\s*-?\d{1,3}(\.\d+)?$')
+    current: List[float] = Field(..., min_items=2, max_items=2)
+    pickup: List[float] = Field(..., min_items=2, max_items=2)
+    dropoff: List[float] = Field(..., min_items=2, max_items=2)
 
-    @field_validator('currentLocation', 'pickupLocation', 'dropoffLocation')
-    def validate_lat_lng_range(cls, value):
-        try:
-            latitude, longitude = map(float, value.split(", "))
-            if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
-                raise ValueError("Invalid latitude or longitude range.")
-            return value
-        except ValueError:
-            raise ValueError("Invalid latitude or longitude format.")
+    @field_validator('current', 'pickup', 'dropoff', mode='before')
+    def validate_lat_lng(cls, value):
+        if not isinstance(value, list) or len(value) != 2:
+            raise ValueError("Coordinates must be a list of two floats: [longitude, latitude].")
+
+        lon, lat = value  # Longitude first, then latitude
+
+        if not (-180 <= lon <= 180):
+            raise ValueError("Longitude must be between -180 and 180.")
+        if not (-90 <= lat <= 90):
+            raise ValueError("Latitude must be between -90 and 90.")
+
+        return value
